@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AirControl Spatial UI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>AirControl Spatial UI - Pro</title>
   
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
@@ -12,78 +12,71 @@
     :root {
       --primary: #00ffcc;
       --bg: #0a0a12;
-      --panel: rgba(16, 16, 28, 0.75);
+      --panel: rgba(16, 16, 28, 0.85);
     }
 
     body {
       margin: 0;
       padding: 0;
       background-color: var(--bg);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-family: system-ui, -apple-system, sans-serif;
       overflow: hidden;
       display: flex;
       justify-content: center;
       align-items: center;
       height: 100vh;
-      color: #fff;
+      width: 100vw;
     }
 
-    /* Container holding the interface layers */
     #app-container {
       position: relative;
-      width: 100vw;
-      height: 100vh;
-      max-width: 1280px;
-      max-height: 720px;
-      aspect-ratio: 16/9;
+      width: 100%;
+      height: 100%;
       background: #000;
-      box-shadow: 0 20px 50px rgba(0,0,0,0.5);
-      border-radius: 12px;
-      overflow: hidden;
     }
 
     #webcam {
       display: none;
     }
 
-    /* Mirror the tracking canvas for natural interaction */
     #output_canvas {
       position: absolute;
       top: 0;
       left: 0;
       width: 100%;
       height: 100%;
-      transform: scaleX(-1);
-      object-fit: cover;
-      z-index: 1;
+      transform: scaleX(-1); /* Mirror view */
+      object-fit: cover; /* Ensures camera fills screen properly without distortion */
     }
 
-    /* HUD Dashboard Overlay */
     .hud-overlay {
       position: absolute;
-      top: 20px;
+      top: env(safe-area-inset-top, 20px);
       left: 20px;
+      right: 20px;
       background: var(--panel);
-      padding: 15px 25px;
-      border-radius: 8px;
+      padding: 12px 20px;
+      border-radius: 12px;
       backdrop-filter: blur(10px);
       border: 1px solid rgba(255,255,255,0.1);
-      z-index: 2;
+      z-index: 10;
       pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
     }
 
     .hud-overlay h1 {
       margin: 0;
-      font-size: 1.2rem;
+      font-size: 1rem;
       text-transform: uppercase;
       letter-spacing: 2px;
       color: var(--primary);
     }
 
     .status-text {
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       color: #8a8a9e;
-      margin-top: 5px;
     }
   </style>
 </head>
@@ -94,8 +87,8 @@
     <canvas id="output_canvas"></canvas>
     
     <div class="hud-overlay">
-      <h1>AirControl System</h1>
-      <div id="status" class="status-text">System Ready. Raise hand to initiate.</div>
+      <h1>AirControl Wireless</h1>
+      <div id="status" class="status-text">Initializing Camera...</div>
     </div>
   </div>
 
@@ -105,89 +98,121 @@
     const canvasCtx = canvasElement.getContext('2d');
     const statusDisplay = document.getElementById('status');
 
-    // Define virtual buttons directly in workspace coordinates (pixels)
-    const buttons = [
-      { id: 'btn1', x: 150, y: 100, width: 220, height: 80, label: 'Action A', color: '#00ffcc', active: false },
-      { id: 'btn2', x: 910, y: 100, width: 220, height: 80, label: 'Action B', color: '#ff3366', active: false }
-    ];
+    // Smooth Cursor Memory Variables (Lerp)
+    let smoothX = 0;
+    let smoothY = 0;
+    const SMOOTHING_FACTOR = 0.18; // Lower value = smoother but slight delay. Higher = snappier but more jitter.
 
-    // Simple collision check script
+    // Dynamic virtual buttons array
+    let buttons = [];
+
+    // Recalculate aspect ratio layouts dynamically based on actual screen size
+    function setupResponsiveCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      canvasElement.width = window.innerWidth * dpr;
+      canvasElement.height = window.innerHeight * dpr;
+      
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+
+      // Define buttons relatively so they are always accessible on both mobile and desktop screens
+      buttons = [
+        { id: 'btn1', x: w * 0.05, y: h * 0.2, width: w * 0.4, height: 70, label: 'Action A', color: '#00ffcc', active: false, clicked: false },
+        { id: 'btn2', x: w * 0.55, y: h * 0.2, width: w * 0.4, height: 70, label: 'Action B', color: '#ff3366', active: false, clicked: false }
+      ];
+    }
+
+    window.addEventListener('resize', setupResponsiveCanvas);
+    setupResponsiveCanvas();
+
     function isInside(px, py, btn) {
       return px > btn.x && px < btn.x + btn.width && py > btn.y && py < btn.y + btn.height;
     }
 
     function onResults(results) {
+      const dpr = window.devicePixelRatio || 1;
+      const displayWidth = canvasElement.width / dpr;
+      const displayHeight = canvasElement.height / dpr;
+
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
       
-      // Draw live background stream frame
-      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.save();
+      canvasCtx.scale(dpr, dpr);
       
-      // Render interactive virtual boxes
+      // Handle correct canvas center frame stretching
+      canvasCtx.drawImage(results.image, 0, 0, displayWidth, displayHeight);
+      
+      // Draw Responsive UI Buttons
       buttons.forEach(btn => {
-        canvasCtx.fillStyle = btn.active ? btn.color : 'rgba(16, 16, 28, 0.6)';
+        canvasCtx.fillStyle = btn.active ? btn.color : 'rgba(16, 16, 28, 0.7)';
         canvasCtx.strokeStyle = btn.color;
-        canvasCtx.lineWidth = 3;
+        canvasCtx.lineWidth = 2;
         
-        // Draw Button Shape
         canvasCtx.beginPath();
-        canvasCtx.roundRect(btn.x, btn.y, btn.width, btn.height, 8);
+        canvasCtx.roundRect(btn.x, btn.y, btn.width, btn.height, 10);
         canvasCtx.fill();
         canvasCtx.stroke();
 
-        // Draw Button Text
         canvasCtx.fillStyle = btn.active ? '#000' : '#fff';
-        canvasCtx.font = 'bold 18px sans-serif';
+        canvasCtx.font = '600 15px system-ui';
         canvasCtx.textAlign = 'center';
         canvasCtx.textBaseline = 'middle';
         canvasCtx.fillText(btn.label, btn.x + btn.width/2, btn.y + btn.height/2);
       });
 
       if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-        statusDisplay.innerText = "Tracking Object: Active";
+        const landmarks = results.multiHandLandmarks[0];
+
+        // 1. Calculate Raw Target Positions
+        const targetX = (1 - landmarks[8].x) * displayWidth;
+        const targetY = landmarks[8].y * displayHeight;
+        
+        const thumbX = (1 - landmarks[4].x) * displayWidth;
+        const thumbY = landmarks[4].y * displayHeight;
+
+        // 2. Apply Linear Interpolation (Lerp) to damp tracking vibrations
+        smoothX += (targetX - smoothX) * SMOOTHING_FACTOR;
+        smoothY += (targetY - smoothY) * SMOOTHING_FACTOR;
+
+        const pinchDistance = Math.hypot(smoothX - thumbX, smoothY - thumbY);
+        const isPinching = pinchDistance < 35; 
+
+        statusDisplay.innerText = isPinching ? "Trigger Payload Engine: Active" : "Pointer Tracking: Connected";
         statusDisplay.style.color = "#00ffcc";
 
-        for (const landmarks of results.multiHandLandmarks) {
-          // Track index finger tip (Landmark 8)
-          // Flip X axis back inside canvas math to compensate for visual mirror transform
-          const pointerX = (1 - landmarks[8].x) * canvasElement.width;
-          const pointerY = landmarks[8].y * canvasElement.height;
-
-          // Track thumb tip (Landmark 4) for pinch detection
-          const thumbX = (1 - landmarks[4].x) * canvasElement.width;
-          const thumbY = landmarks[4].y * canvasElement.height;
-
-          // Calculate distance for pinch click
-          const distance = Math.hypot(pointerX - thumbX, pointerY - thumbY);
-          const isPinching = distance < 40; // Pixel distance threshold
-
-          buttons.forEach(btn => {
-            if (isInside(pointerX, pointerY, btn)) {
-              btn.active = true;
-              if (isPinching) {
-                statusDisplay.innerText = `Triggered: ${btn.label}!`;
-                // Add your custom logic here (e.g., fetch API endpoints or play sound)
+        buttons.forEach(btn => {
+          if (isInside(smoothX, smoothY, btn)) {
+            btn.active = true;
+            if (isPinching && !btn.clicked) {
+              btn.clicked = true;
+              statusDisplay.innerText = `[SUCCESS] Executed ${btn.label}`;
+              
+              // Mobile Haptic Feedback Trigger!
+              if (navigator.vibrate) {
+                navigator.vibrate(60); 
               }
-            } else {
-              btn.active = false;
             }
-          });
+            if (!isPinching) btn.clicked = false;
+          } else {
+            btn.active = false;
+            btn.clicked = false;
+          }
+        });
 
-          // Draw neon targeting reticle at finger pointer tip
-          canvasCtx.beginPath();
-          canvasCtx.arc(pointerX, pointerY, isPinching ? 8 : 14, 0, 2 * Math.PI);
-          canvasCtx.strokeStyle = isPinching ? '#ff3366' : varAlpha('--primary', 0.8);
-          canvasCtx.lineWidth = 4;
-          canvasCtx.stroke();
-        }
+        // Draw Stabilized Target Ring Indicator
+        canvasCtx.beginPath();
+        canvasCtx.arc(smoothX, smoothY, isPinching ? 8 : 15, 0, 2 * Math.PI);
+        canvasCtx.strokeStyle = isPinching ? '#ff3366' : '#00ffcc';
+        canvasCtx.lineWidth = 3;
+        canvasCtx.stroke();
+
       } else {
-        statusDisplay.innerText = "System Ready. Raise hand to initiate.";
+        statusDisplay.innerText = "System Ready. Wave hand to begin tracking.";
         statusDisplay.style.color = "#8a8a9e";
-        buttons.forEach(btn => btn.active = false);
+        buttons.forEach(btn => { btn.active = false; btn.clicked = false; });
       }
-    }
-
-    function varAlpha(variable, alpha) {
-      return `rgba(0, 255, 204, ${alpha})`;
+      
+      canvasCtx.restore();
     }
 
     const hands = new Hands({
@@ -197,20 +222,19 @@
     hands.setOptions({
       maxNumHands: 1,
       modelComplexity: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.6
     });
     hands.onResults(onResults);
 
+    // Dynamic constraint loader for mobile vs computer aspect profiles
     const camera = new Camera(videoElement, {
       onFrame: async () => { await hands.send({image: videoElement}); },
-      width: 1280,
-      height: 720
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+      facingMode: "user"
     });
     camera.start();
-
-    canvasElement.width = 1280;
-    canvasElement.height = 720;
   </script>
 </body>
 </html>
